@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Document Comparator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>PDF Document Comparator</h1>
+        <p>Upload two PDF files to see the word-level differences highlighted.</p>
+
+        <form id="upload-form">
+            <div class="file-inputs">
+                <div class="file-input">
+                    <label for="pdf1">Original PDF</label>
+                    <input type="file" id="pdf1" name="pdf1" accept=".pdf" required>
+                </div>
+                <div class="file-input">
+                    <label for="pdf2">Changed PDF</label>
+                    <input type="file" id="pdf2" name="pdf2" accept=".pdf" required>
+                </div>
+            </div>
+            <button type="submit" id="compare-btn">Compare</button>
+        </form>
+
+        <div id="loader" class="hidden">
+            <div class="spinner"></div>
+            <p>Comparing documents...</p>
+        </div>
+
+        <div id="results-container" class="hidden">
+            <div class="results-header">
+                <h2>Original</h2>
+                <h2>Changed</h2>
+            </div>
+            <div class="results-panels">
+                <div id="original-panel" class="panel"></div>
+                <div id="changed-panel" class="panel"></div>
+            </div>
+        </div>
+        <div id="error-message" class="hidden"></div>
+    </div>
+    <div id="download-container" class="hidden">
+        <button id="download-btn">Download as PDF</button>
+    </div>
+
+    <script>
+        // --- Keep all existing element variables ---
+        const uploadForm = document.getElementById('upload-form');
+        const compareBtn = document.getElementById('compare-btn');
+        const loader = document.getElementById('loader');
+        const resultsContainer = document.getElementById('results-container');
+        const originalPanel = document.getElementById('original-panel');
+        const changedPanel = document.getElementById('changed-panel');
+        const errorMessage = document.getElementById('error-message');
+        
+        // --- Add variables for the new download button ---
+        const downloadContainer = document.getElementById('download-container');
+        const downloadBtn = document.getElementById('download-btn');
+
+        // Store diff data globally to be accessible by the download button
+        let currentDiffData = null;
+
+        // --- Main form submission logic (UNCHANGED) ---
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            resultsContainer.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            downloadContainer.classList.add('hidden'); // Hide download button on new compare
+            loader.classList.remove('hidden');
+            compareBtn.disabled = true;
+
+            const formData = new FormData(uploadForm);
+            
+            try {
+                const response = await fetch('/compare', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    currentDiffData = data.diff; // <-- Store the diff data
+                    renderDiff(currentDiffData);
+                    resultsContainer.classList.remove('hidden');
+                    downloadContainer.classList.remove('hidden'); // <-- Show the download button
+                } else {
+                    errorMessage.textContent = 'Error: ' + data.message;
+                    errorMessage.classList.remove('hidden');
+                }
+            } catch (error) {
+                errorMessage.textContent = 'A network error occurred. Please try again.';
+                errorMessage.classList.remove('hidden');
+            } finally {
+                loader.classList.add('hidden');
+                compareBtn.disabled = false;
+            }
+        });
+
+        // --- renderDiff and createLineHtml functions (UNCHANGED) ---
+        function createLineHtml(word_diffs) {
+            const lineDiv = document.createElement('div');
+            lineDiv.className = 'diff-line';
+            if (!word_diffs || word_diffs.length === 0) {
+                lineDiv.innerHTML = ' ';
+                return lineDiv;
+            }
+            word_diffs.forEach(([tag, text]) => {
+                const span = document.createElement('span');
+                span.className = `diff-word-${tag}`;
+                span.textContent = text;
+                lineDiv.appendChild(span);
+            });
+            return lineDiv;
+        }
+
+        function renderDiff(diff) {
+            originalPanel.innerHTML = '';
+            changedPanel.innerHTML = '';
+
+            diff.forEach((line_diff) => {
+                const [type, ...content] = line_diff;
+                let originalLine, changedLine;
+                switch (type) {
+                    case 'equal':
+                        originalLine = createLineHtml([['equal', content[0] || '']]);
+                        changedLine = createLineHtml([['equal', content[0] || '']]);
+                        break;
+                    case 'insert':
+                        originalLine = createLineHtml([]);
+                        changedLine = createLineHtml([['insert', content[0]]]);
+                        originalLine.classList.add('placeholder-line');
+                        changedLine.classList.add('insert-line');
+                        break;
+                    case 'delete':
+                        originalLine = createLineHtml([['delete', content[0]]]);
+                        changedLine = createLineHtml([]);
+                        originalLine.classList.add('delete-line');
+                        changedLine.classList.add('placeholder-line');
+                        break;
+                    case 'replace':
+                        originalLine = createLineHtml(content[0]);
+                        changedLine = createLineHtml(content[1]);
+                        originalLine.classList.add('replace-line');
+                        changedLine.classList.add('replace-line');
+                        break;
+                }
+                originalPanel.appendChild(originalLine);
+                changedPanel.appendChild(changedLine);
+            });
+        }
+
+        // --- NEW: Event listener for the download button ---
+        downloadBtn.addEventListener('click', async () => {
+            if (!currentDiffData) {
+                alert('No comparison data available to generate a PDF.');
+                return;
+            }
+            downloadBtn.textContent = 'Generating...';
+            downloadBtn.disabled = true;
+
+            try {
+                const response = await fetch('/generate_pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ diff: currentDiffData })
+                });
+
+                if (response.ok) {
+                    // It's a file download, so we need to handle the blob
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'comparison.pdf'; // The filename for the download
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    a.remove();
+                } else {
+                    const errorData = await response.json();
+                    alert(`Failed to generate PDF: ${errorData.message}`);
+                }
+            } catch (error) {
+                alert('An error occurred while generating the PDF.');
+            } finally {
+                downloadBtn.textContent = 'Download as PDF';
+                downloadBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
