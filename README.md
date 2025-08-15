@@ -31,10 +31,8 @@ pip install -r requirements.txt
 ## Running the App
 
 ```bash
-streamlit run your_file_name.py
+streamlit run 5.new.py
 ```
-
-Replace `your_file_name.py` with the name of the Python file containing the app.
 
 ## Usage
 
